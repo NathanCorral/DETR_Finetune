@@ -21,33 +21,31 @@ import seaborn as sns
 from plot_utils import draw_bbox_xywh, draw_bbox_centerxywh_rel, show_samples, denormalize_image, show_samples_batch, param_count
 from utils import make_folder, set_random_seed
 
-
-
 def get_default_config():
     """ Create the default configuration, (optionally) overwritten by the .json passed in thru argparser. """
     config = {
-        'debug_prints': True,
+        'debug_prints': False,
         'ds_name': 'keremberke/german-traffic-sign-detection',
         # 'ds_name': 'detection-datasets/coco',
         'model_name': 'facebook/detr-resnet-50',
-        'train_batch_size': 2,
-        'val_batch_size': 4,
+        'train_batch_size': 32,
+        'val_batch_size': 64,
         # Optomizer
         'weight_decay':.02,
         'lr': 2e-4,
         # DETR Specific 
         'threshold': 0.7, # postprocessing
         # Scheduler
-           # multiply by the length of the training dataset to determine warmup steps
-        'warmup_steps_ratio': 0.1,
+           # multiply by the length of the dataloader to determine warmup steps
+        'warmup_steps_ratio': 0.5,
         # Other
         'device': "cuda:0",
-        'epochs': 5,
+        'epochs': 30,
         # Make sure to include /
-        'save_model_dir': "./streetsign_recognizer1_freezebackbone/",
+        'save_model_dir': "./streetsign_recognizer_0/",
 
         # Finetune v.s. Transfer Learning tests:
-        'freeze_backbone': True,
+        'freeze_backbone': False,
         'freeze_encoder': False,
 
         # plotting
@@ -205,7 +203,6 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device):
     :returns: The average training loss for the epoch
     :rtype: float
     """
-    return np.random.rand(), {}
     model.train()
     loss_sum = 0.
     loss_dict_sum = {}
@@ -246,7 +243,6 @@ def validate_one_epoch(model, dataloader, device):
     :returns: The average validation loss for the epoch
     :rtype: float
     """
-    return np.random.rand(), {}
     model.eval()
     val_loss_sum = 0.
     val_loss_dict_sum = {}
@@ -321,7 +317,6 @@ def plot_loss(training_loss, validation_loss=None, epochs=None, title="Training/
     - xlabel: Label for the x-axis.
     - ylabel: Label for the y-axis.
     """
-
     if epochs is None:
         epochs = len(training_loss)
     
@@ -344,6 +339,61 @@ def plot_loss(training_loss, validation_loss=None, epochs=None, title="Training/
     ax.yaxis.grid(True, which='major')
     return fig, ax
 
+def plot_metrics(train_dict, val_dict=None, epochs=None, title="Metric Losses Train/Val"):
+    """
+    Plots a dictionary of training and validation metrics using Matplotlib and Seaborn in subplots.
+
+    :param train_dict: Dictionary of training metrics where keys are metric names and values are lists of metric values per epoch.
+    :param val_dict: (Optional) Dictionary of validation metrics where keys are metric names and values are lists of metric values per epoch.
+    :param epochs: (Optional) Number of epochs. If not provided, the length of the metric lists will be used.
+    :returns: A tuple of Matplotlib figure and axes objects.
+    :raises KeyError: If the keys in train_dict and val_dict do not match for a particular metric.
+    """
+
+    sns.set(style="whitegrid")
+
+    # Combine keys from both train and validation dictionaries
+    all_keys = set(train_dict.keys())
+    if val_dict is not None:
+        all_keys.update(val_dict.keys())
+
+    # Determine the number of rows (subplots)
+    n_rows = len(all_keys)
+
+    # Create the figure and axes
+    fig, axes = plt.subplots(n_rows, 1, figsize=(10, 4 * n_rows), sharex=True)
+    fig.suptitle(title)
+    
+    if n_rows == 1:
+        axes = [axes]  # Ensure axes is a list even for a single subplot
+
+    if epochs is None:
+        # Assuming all lists have the same length
+        epochs = len(next(iter(train_dict.values())))
+
+    for i, key in enumerate(sorted(all_keys)):
+        ax = axes[i]
+        ax.set_title(key)
+        ax.set_ylabel(key)
+
+        if key in train_dict:
+            ax.plot(range(1, epochs + 1), train_dict[key], label='Training ' + key, color='blue', linewidth=2.5)
+
+        if val_dict is not None and key in val_dict:
+            ax.plot(range(1, epochs + 1), val_dict[key], label='Validation ' + key, color='orange', linewidth=2.5)
+
+        if i == 0:
+            ax.legend()
+
+    # Set x-label only on the last subplot
+    axes[-1].set_xlabel("Epoch")
+
+    # Adjust layout to avoid overlap
+    plt.tight_layout()
+
+    return fig, axes
+
+
 def main(config):
     """
     Main training loop.
@@ -365,6 +415,7 @@ def main(config):
 
     # Initialize model and processor
     model = initialize_model(config, num_labels=len(id2label))
+    print("Model:  ",  model)
     total, trainable, frac = param_count(model)
     print(f"{total = :,} | {trainable = :,} | {frac:.2f}%")
 
@@ -408,27 +459,39 @@ def main(config):
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=int(config['warmup_steps_ratio'] * len(train_dataloader)),
-        num_training_steps=len(train_dataloader)
+        num_training_steps=len(train_dataloader)*config['epochs'],
     )
 
     # Training loop
     train_losses, val_losses = [], []
-    train_loss_items, val_loss_items = [], []
+    train_loss_items, val_loss_items = {}, {}
     for epoch in range(1, config['epochs'] + 1):
         print(f'Epoch: {epoch}')
         train_loss, train_loss_dict = train_one_epoch(model, train_dataloader, optimizer, scheduler, config['device'])
-        train_losses.append(train_loss)
-        train_loss_items.append(train_loss_dict)
+        # Print Epoch Loss
         print(f'Training Loss: {train_loss:.3f}')
         for k,v in train_loss_dict.items(): 
             print(f'\ttrain_{k}:   {v:.3f}')
+        # Save losses for plotting later
+        train_losses.append(train_loss)
+        for key, value in train_loss_dict.items():
+            if key not in train_loss_items.keys():
+                train_loss_items[key] = [value]
+            else:
+                train_loss_items[key].append(value)
+        
 
         val_loss, val_loss_dict = validate_one_epoch(model, val_dataloader, config['device'])
-        val_losses.append(val_loss)
-        val_loss_items.append(val_loss_dict)
         print(f'Validation Loss: {val_loss:.3f}')
         for k,v in val_loss_dict.items(): 
             print(f'\tval_{k}:   {v:.3f}')
+        val_losses.append(val_loss)
+        for key, value in val_loss_dict.items():
+            if key not in val_loss_items.keys():
+                val_loss_items[key] = [value]
+            else:
+                val_loss_items[key].append(value)
+
 
     # Save the model
     print("Saving Model...")
@@ -439,6 +502,13 @@ def main(config):
     np.save(os.path.join(config["save_model_dir"], "val_loss.npy"), np.array(val_losses))
     plot_loss(train_losses, val_losses, epochs=config['epochs'], xlabel=f"Epoch\nSteps/Epoch: {len(train_dataloader)}")
     plt.savefig(os.path.join(config["save_model_dir"], "training_loss.png"), bbox_inches='tight')
+
+    # Save and plot the loss_dict arrays
+    for key_train, key_val in zip(train_loss_items.keys(), val_loss_items.keys()):
+        np.save(os.path.join(config["save_model_dir"], f"train_{key_train}.npy"), np.array(train_loss_items[key_train]))
+        np.save(os.path.join(config["save_model_dir"], f"val_{key_val}.npy"), np.array(val_loss_items[key_val]))
+    plot_metrics(train_loss_items, val_loss_items, epochs=config['epochs'])
+    plt.savefig(os.path.join(config["save_model_dir"], "train_metrics.png"), bbox_inches='tight')
 
 
 if __name__ == "__main__":
