@@ -2,7 +2,100 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-def draw_bbox_xywh(ax, bbox_xywh, label, score=None, id2label=None, edgecolor='g', linewidth=2):
+
+def clip_objs(image: np.array, bboxes: list, margin=0.1) -> list:
+    """
+    Clip image regions based on bounding boxes with an additional x% margin.
+
+    Parameters:
+    - image: np.array, the input image from which regions are to be cropped.
+    - bboxes: list of tuples/lists, each containing (x, y, w, h) where:
+      - x, y are the top-left corner coordinates of the bounding box.
+      - w, h are the width and height of the bounding box.
+
+    Returns:
+    - list of np.array, each being a cropped region of the input image.
+    """
+
+    crops = []
+    img_height, img_width = image.shape[:2]
+
+    for bbox in bboxes:
+        x, y, w, h = bbox
+
+        # Calculate the 10% margin
+        x_margin = int(0.1 * w)
+        y_margin = int(0.1 * h)
+
+        # Adjust the bounding box coordinates to include the margin
+        x_start = int(max(x - x_margin, 0))
+        y_start = int(max(y - y_margin, 0))
+        x_end = int(min(x + w + x_margin, img_width))
+        y_end = int(min(y + h + y_margin, img_height))
+
+        # Crop the image
+        crop = image[y_start:y_end, x_start:x_end, :]
+        crops.append(crop)
+
+    return crops
+
+import matplotlib.pyplot as plt
+
+def show_objs(image: np.array, bboxes: list, titles: list = None) -> None:
+    """
+    Display the original image and cropped regions of an image based on bounding boxes
+    in a subplot grid.
+
+    Parameters:
+    - image: np.array, the input image from which regions are to be cropped.
+    - bboxes: list of tuples/lists, each containing (x, y, w, h).
+    - titles: list of strings, optional, titles for each subplot. 
+      The first title is for the original image, and subsequent titles for the crops.
+
+    The function creates a subplot with the original image in the first row,
+    centered across two columns, followed by 2 columns and as many rows as needed
+    to display all the cropped regions.
+    """
+    
+    # Get cropped images using the clip_objs function
+    crops = clip_objs(image, bboxes)
+    
+    # Calculate number of rows needed
+    n_crops = len(crops)
+    n_cols = 2
+    n_rows = (n_crops + n_cols - 1) // n_cols + 1  # Additional row for the original image
+
+    # Create a subplot with the calculated number of rows and 2 columns
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(10, n_rows * 5))
+    axes = axes.flatten()  # Flatten to easily iterate
+
+    # Display the original image centered in the first row
+    axes[0].imshow(image)
+    axes[0].axis('off')  # Hide axes for better visualization
+    axes[0].set_title(titles[0] if titles and len(titles) > 0 else "Original Image", fontsize=16)
+    for box in bboxes:
+        draw_bbox_xywh(axes[0], box)
+
+    # Hide the second column of the first row (used for centering)
+    axes[1].axis('off')
+
+    # Display each crop in the corresponding subplot
+    for i, crop in enumerate(crops):
+        axes[i + 2].imshow(crop)
+        axes[i + 2].axis('off')  # Hide axes for better visualization
+        if titles and len(titles) > i + 1:
+            axes[i + 2].set_title(titles[i + 1], fontsize=14)
+
+    # Hide any unused subplots
+    for i in range(n_crops, len(axes)):
+        axes[i].axis('off')
+    
+    plt.tight_layout()
+    plt.suptitle("Cropped Objects", fontsize=20)
+    
+
+
+def draw_bbox_xywh(ax, bbox_xywh, label=None, score=None, id2label=None, edgecolor='g', linewidth=2):
     """
     Draw bounding box on the image given in XYWH format (top-left x, top-left y, width, height).
 
@@ -26,10 +119,13 @@ def draw_bbox_xywh(ax, bbox_xywh, label, score=None, id2label=None, edgecolor='g
     x, y, w, h = tuple(bbox_xywh)
     rect = patches.Rectangle((x, y), w, h, linewidth=linewidth, edgecolor=edgecolor, facecolor='none')
     
-    label_text = f'{id2label[int(label)] if id2label else label}'
-    if score:
-        label_text += f': {score:.2f}'
-    
+    if label is not None:
+        label_text = f'{id2label[int(label)] if id2label else label}'
+        if score:
+            label_text += f': {score:.2f}'
+    else:
+        label_text = None
+
     text = ax.text(x, y - 10, label_text, fontsize=9, color='black', bbox=dict(facecolor='white', alpha=0.2))
     ax.add_patch(rect)
 

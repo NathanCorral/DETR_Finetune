@@ -18,7 +18,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # Local
-from plot_utils import draw_bbox_xywh, draw_bbox_centerxywh_rel, show_samples, denormalize_image, show_samples_batch, param_count
+from plot_utils import draw_bbox_xywh, draw_bbox_centerxywh_rel, show_samples, denormalize_image, show_samples_batch, param_count, show_objs
 from utils import make_folder, set_random_seed
 
 def get_default_config():
@@ -157,6 +157,8 @@ def prepare_dataset(datasets, processor, split):
         """
         Transform for an entire batch.
         """
+        if not "image" in examples or not "targets" in examples:
+            return examples # spliced batch
         images = [np.array(im) for im in examples["image"]]
         return processor(images=images, annotations=examples["targets"], return_tensors="pt")
 
@@ -164,6 +166,8 @@ def prepare_dataset(datasets, processor, split):
         """
         Transform for an entire batch.
         """
+        if not "image" in examples or not "targets" in examples:
+            return examples # spliced batch
         images = [np.array(im) for im in examples["image"]]
         return processor(images=images, annotations=examples["targets"], return_tensors="pt")
 
@@ -394,6 +398,29 @@ def plot_metrics(train_dict, val_dict=None, epochs=None, title="Metric Losses Tr
     return fig, axes
 
 
+def dataset_explorer(dataset, id2label, save_dir, n=3, with_transform=False):
+    """
+    Explore the n images and the objects in the dataset
+    """
+    # Note that splicing the samples e.g. samples["image"] wont apply the train transform because
+    #   the transform examples only have the "image" column and none of the others i.e. ["image_id", "targets", ..]
+    samples = dataset.shuffle().select(range(n)) # selecting random images
+    print("Sample columns:  ",  samples.column_names)
+
+    images = [np.array(im) for im in samples["image"]]
+    objects = samples["objects"]
+    image_ids = samples["image_id"]
+
+    for i, im in enumerate(images):
+        print(f"Displaying objects in image:  {image_ids[i]}")
+        print(f"Objects in image:  {objects[i]}")
+        print(f"Image shape:  {im.shape}")
+        titles = [id2label[category] for category in objects[i]["category"]]
+        titles = [f'Image: {image_ids[i]}'] + titles
+        show_objs(im, objects[i]["bbox"], titles=titles)
+        plt.savefig(os.path.join(save_dir, f'dataset_im_{image_ids[i]}'), bbox_inches='tight')
+
+
 def main(config):
     """
     Main training loop.
@@ -401,7 +428,8 @@ def main(config):
     :param config: Configuration dictionary
     :type config: dict
     """
-    set_random_seed(86)
+    # set_random_seed(86)
+    set_random_seed(5)
     # Model data pre/post processor
     processor = DetrImageProcessor.from_pretrained(config['model_name'])
 
@@ -442,6 +470,8 @@ def main(config):
     val_dataloader = DataLoader(val_dataset, collate_fn=collate_fn, batch_size=config['val_batch_size'], shuffle=False)
 
     if config['debug_prints']:
+        dataset_explorer(train_dataset, save_dir=config["save_model_dir"], id2label=id2label)
+
         # Save an example of the training batch
         batch = next(iter(train_dataloader))
         show_samples_batch(batch, id2label, mean, std)
@@ -492,9 +522,15 @@ def main(config):
             else:
                 val_loss_items[key].append(value)
 
+        # Save ckpt
+        if epoch % 10 == 0:
+            save_model(model, os.path.join(config['save_model_dir'], f'epoch_{epoch}'))
+
+
 
     # Save the model
     print("Saving Model...")
+    save_model(model, os.path.join(config['save_model_dir'], f'epoch_{epoch}'))
     save_model(model, config['save_model_dir'])
 
     # Save loss data and plot the results
