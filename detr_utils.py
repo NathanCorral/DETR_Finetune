@@ -139,9 +139,6 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device):
         scheduler.step()
         optimizer.zero_grad()
 
-        if i > 5:
-            break
-
     loss_dict = {k: v/len(dataloader) for k, v in loss_dict_sum.items()}
     return loss_sum / len(dataloader), loss_dict
 
