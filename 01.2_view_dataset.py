@@ -7,6 +7,7 @@ import numpy as np
 from datasets import load_dataset
 
 from transformers import DetrImageProcessor
+from torch.nn import Identity
 from torch.utils.data import DataLoader
 
 # Plotting imports
@@ -51,21 +52,16 @@ def dataset_explorer(dataset, id2label, save_dir, n=3):
     """
     # Note that splicing the samples e.g. samples["image"] wont apply the train transform because
     #   the transform examples only have the "image" column and none of the others i.e. ["image_id", "targets", ..]
-    samples = dataset.shuffle().select(range(n)) # selecting random images
+    # This method may not work with an itterable dataset, which doesnt have a train transform
+    dataset_without_transform = dataset.with_transform(Identity()) # hack to remove transform
+    samples = dataset_without_transform.shuffle().select(range(n)) # selecting random images
 
-    images = [np.array(im) for im in samples["image"]]
-    objects = samples["objects"]
-    image_ids = samples["image_id"]
-
-    for i, im in enumerate(images):
-        # print(f"Displaying objects in image:  {image_ids[i]}")
-        # print(f"Objects in image:  {objects[i]}")
-        # print(f"Image shape:  {im.shape}")
-        titles = [id2label[category] for category in objects[i]["category"]]
-        titles = [f'Image: {image_ids[i]}'] + titles
-        show_objs(im, objects[i]["bbox"], titles=titles)
-        plt.savefig(os.path.join(save_dir, f'dataset_im_{image_ids[i]}'), bbox_inches='tight')
-
+    for i, sample in enumerate(samples):
+        im = np.array(sample["image"])
+        titles = [category for category in sample["objects"]["category"]]
+        titles = [f'Image: {sample["image_id"]}'] + titles
+        show_objs(im, sample["objects"]["bbox"], titles=titles)
+        plt.savefig(os.path.join(save_dir, f'dataset_im_{sample["image_id"]}'), bbox_inches='tight')
 
 
 def main(config, num_samples=8):
@@ -73,21 +69,19 @@ def main(config, num_samples=8):
     save_dir = config["save_model_dir"]
 
     datasets = load_dataset(config['ds_name'], name=config["ds_name_arg"], cache_dir=config["dataset_cache_dir"])
-    splits = ["train", "val", "test"]
+    splits = ["train", "test"]
 
     processor = DetrImageProcessor.from_pretrained(config['model_name'])
     mean, std = processor.image_mean, processor.image_std
 
     train_dataset, id2label = prepare_dataset(datasets["train"], processor, "train")
-    val_dataset, _ = prepare_dataset(datasets["validation"], processor, "validation")
     test_dataset, _ = prepare_dataset(datasets["test"], processor, "test")
-    datasets = [train_dataset, val_dataset, test_dataset]
+    datasets = [train_dataset, test_dataset]
     print("Dataset columns:  ",  train_dataset.column_names)
 
     train_dataloader = prepare_dataloader(train_dataset, processor, batch_size=config['train_batch_size'], shuffle=True)
-    val_dataloader = prepare_dataloader(val_dataset, processor, batch_size=config['val_batch_size'], shuffle=False)
     test_dataloader = prepare_dataloader(test_dataset, processor, batch_size=config['val_batch_size'], shuffle=False)
-    dataloaders = [train_dataloader, val_dataloader, test_dataloader]
+    dataloaders = [train_dataloader, test_dataloader]
 
     # Cycle through some examples, saving plots
     for split, dataset, dataloader in zip(splits, datasets, dataloaders):
@@ -96,8 +90,8 @@ def main(config, num_samples=8):
         print(f"Creating and Saving plots in {plot_dir}")
 
         # Plot class distribution
-        plot_class_distribution(dataset, split, id2label)
-        plt.savefig(os.path.join(plot_dir, "class_distribution.png"), bbox_inches='tight')
+        # plot_class_distribution(dataset, split, id2label)
+        # plt.savefig(os.path.join(plot_dir, "class_distribution.png"), bbox_inches='tight')
 
         # Plot objects in the dataset
         dataset_explorer(dataset, id2label, save_dir=plot_dir, n=num_samples)

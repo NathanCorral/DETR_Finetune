@@ -29,7 +29,7 @@ def main(config):
     # threshold = 0.017
     save_dir = config["save_model_dir"]
 
-    dataset = load_dataset(config['ds_name'], name="full", split="test", cache_dir=config["dataset_cache_dir"])
+    dataset = load_dataset(config['ds_name'], name=config["ds_name_arg"], split="test", cache_dir=config["dataset_cache_dir"])
 
     processor = DetrImageProcessor.from_pretrained(config['model_name'])
     mean, std = processor.image_mean, processor.image_std

@@ -24,6 +24,9 @@ def prepare_dataset(dataset, processor, split):
     if isinstance(dataset, hf_datasets.dataset_dict.DatasetDict):
         dataset = dataset[split]
 
+    id2label = {0:'head', 1:'helmet', 2:'person', 3:'others'}
+    label2id = {v: k for k, v in id2label.items()}
+
     def add_targets_col(example):
         """
         Prepare the annotations to be in COCO format.
@@ -38,7 +41,7 @@ def prepare_dataset(dataset, processor, split):
             example['objects']['id']):
             new_ann = {
                 "image_id": example["image_id"],
-                "category_id": label,
+                "category_id": label2id[label],
                 "isCrowd": 0,
                 "area": area,
                 "bbox": list(bbox_xywh),
@@ -79,9 +82,6 @@ def prepare_dataset(dataset, processor, split):
     else:
         print(f"Unknown dataset type {type(dataset)}, trying default...")
         dataset = dataset.map(add_targets_col).with_transform(transform)
-
-
-    id2label = {i: name for i, name in enumerate(dataset.features["objects"].feature["category"].names)}
 
     return dataset, id2label
 
@@ -138,6 +138,9 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device):
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
+
+        if i > 5:
+            break
 
     loss_dict = {k: v/len(dataloader) for k, v in loss_dict_sum.items()}
     return loss_sum / len(dataloader), loss_dict

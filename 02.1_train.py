@@ -46,16 +46,16 @@ def main(config):
     set_random_seed(5)
     save_dir = config["save_model_dir"]
 
-    datasets = load_dataset(config['ds_name'], name="full", cache_dir=config["dataset_cache_dir"])
+    datasets = load_dataset(config['ds_name'], name=config["ds_name_arg"], cache_dir=config["dataset_cache_dir"])
 
     processor = DetrImageProcessor.from_pretrained(config['model_name'])
     mean, std = processor.image_mean, processor.image_std
 
     train_dataset, id2label = prepare_dataset(datasets["train"], processor, "train")
-    val_dataset, _ = prepare_dataset(datasets["validation"], processor, "validation")
+    # val_dataset, _ = prepare_dataset(datasets["validation"], processor, "validation")
 
     train_dataloader = prepare_dataloader(train_dataset, processor, batch_size=config['train_batch_size'], shuffle=True)
-    val_dataloader = prepare_dataloader(val_dataset, processor, batch_size=config['val_batch_size'], shuffle=False)
+    # val_dataloader = prepare_dataloader(val_dataset, processor, batch_size=config['val_batch_size'], shuffle=False)
 
     model = initialize_model(config, num_labels=len(id2label))
     total, trainable, frac = param_count(model)
@@ -89,16 +89,16 @@ def main(config):
             else:
                 train_loss_items[key].append(value)
         
-        val_loss, val_loss_dict = validate_one_epoch(model, val_dataloader, config['device'])
-        print(f'Validation Loss: {val_loss:.3f}')
-        for k,v in val_loss_dict.items(): 
-            print(f'\tval_{k}:   {v:.3f}')
-        val_losses.append(val_loss)
-        for key, value in val_loss_dict.items():
-            if key not in val_loss_items.keys():
-                val_loss_items[key] = [value]
-            else:
-                val_loss_items[key].append(value)
+        # val_loss, val_loss_dict = validate_one_epoch(model, val_dataloader, config['device'])
+        # print(f'Validation Loss: {val_loss:.3f}')
+        # for k,v in val_loss_dict.items(): 
+        #     print(f'\tval_{k}:   {v:.3f}')
+        # val_losses.append(val_loss)
+        # for key, value in val_loss_dict.items():
+        #     if key not in val_loss_items.keys():
+        #         val_loss_items[key] = [value]
+        #     else:
+        #         val_loss_items[key].append(value)
 
     # Save the model and training params
     model.save_pretrained(ckpt_dir, from_pt=True)
@@ -107,7 +107,7 @@ def main(config):
     train_loss_items["loss"] = train_losses
     val_loss_items["loss"] = val_losses
     save_losses(train_loss_items, config["train_losses"])
-    save_losses(val_loss_items, config["val_losses"])
+    # save_losses(val_loss_items, config["val_losses"])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Fine tune the DETR model")

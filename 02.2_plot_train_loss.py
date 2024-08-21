@@ -101,11 +101,13 @@ def plot_metrics(train_dict, val_dict=None, epochs=None, title="Metric Losses Tr
 
 def main(config):
     train_losses = load_losses(config["train_losses"])
-    val_losses = load_losses(config["val_losses"])
+    # val_losses = load_losses(config["val_losses"])
     train_loss = train_losses["loss"]
     del train_losses["loss"]
-    val_loss = val_losses["loss"]
-    del val_losses["loss"]
+    # val_loss = val_losses["loss"]
+    # del val_losses["loss"]
+    val_loss = None
+    val_losses = {}
 
     plot_loss(train_loss, val_loss)
     plt.savefig(os.path.join(config["plot_dir"], "training_loss.png"), bbox_inches='tight')
