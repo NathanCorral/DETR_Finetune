@@ -255,20 +255,22 @@ def show_samples_batch(batch, id2label, mean, std, num_cols=2, max_num_rows=3):
     """
     bs = len(batch["pixel_values"])
 
-    num_rows = min(max_num_rows, bs//num_cols)
+    num_rows = max(1, min(max_num_rows, bs//num_cols))
     fig, axs = plt.subplots(num_rows, num_cols)
+    axs = axs.flatten()  # Flatten to easily iterate
 
     axs_patches = []
     axs_texts = []
     axs_ims = []
 
     for i in range(num_rows*num_cols):
-        if num_rows == 1:
-            col = i
-            ax = axs[col]
-        else:
-            row, col = i // num_rows, i % num_rows
-            ax = axs[row, col]
+        # if num_rows == 1:
+        #     col = i
+        #     ax = axs[col]
+        # else:
+        #     row, col = i // num_rows, i % num_rows
+        #     ax = axs[row, col]
+        ax = axs[i]
 
         img = batch["pixel_values"][i].permute(1, 2, 0).numpy()
         img = denormalize_image(img, mean, std)
@@ -277,6 +279,8 @@ def show_samples_batch(batch, id2label, mean, std, num_cols=2, max_num_rows=3):
         axs_ims.append(ax_im)
         if not "labels" in batch.keys():
             continue
+
+        ax.set_title(f"im: {int(batch['labels'][i]['image_id'].item())}")
 
         bboxes_centerxywh_rel = batch['labels'][i]['boxes']
         labels = batch['labels'][i]['class_labels']
@@ -291,18 +295,3 @@ def show_samples_batch(batch, id2label, mean, std, num_cols=2, max_num_rows=3):
         axs_patches.append(patches)
 
         ax.axis('off')
-
-def param_count(model):
-    """
-    Calculate the number of trainable and total parameters in the model.
-
-    :param model: The model to count parameters for
-    :type model: torch.nn.Module
-    :returns: Total number of parameters, trainable parameters, and the fraction that is trainable
-    :rtype: tuple
-    """
-    params = [(p.numel(), p.requires_grad) for p in model.parameters()]
-    trainable = sum([count for count, trainable in params if trainable])
-    total = sum([count for count, _ in params])
-    frac = (trainable / total) * 100
-    return total, trainable, frac

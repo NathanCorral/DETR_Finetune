@@ -11,42 +11,34 @@ import torch
 from torch.utils.data import DataLoader
 from torch.nn import functional as F
 
-from finetune_detr import prepare_dataset
+from detr_utils import prepare_dataset, prepare_dataloader
+
+from detr_utils import prepare_dataset
 from plot_utils import show_samples_batch
-from utils import load_config, set_random_seed
+from utils import load_config, set_random_seed, param_count
+
 
 
 def test_loop(model, test_dataloader):
     pass
 
 def main(config):
-    set_random_seed(6)
-
+    set_random_seed(5)
     device = config["device"]
     threshold = config["threshold"]
-    threshold = 0.017
+    # threshold = 0.017
+    save_dir = config["save_model_dir"]
 
-    # Load test dataset
+    dataset = load_dataset(config['ds_name'], name="full", split="test", cache_dir=config["dataset_cache_dir"])
+
     processor = DetrImageProcessor.from_pretrained(config['model_name'])
     mean, std = processor.image_mean, processor.image_std
 
-    dataset = load_dataset(config['ds_name'], name="full", split="test")
-    test_dataset = prepare_dataset(dataset, processor, split="test")
-    id2label = {i: name for i, name in enumerate(test_dataset.features["objects"].feature["category"].names)}
-    no_obj_label = len(id2label)
+    test_dataset, id2label = prepare_dataset(dataset, processor, "test")
+    test_dataloader = prepare_dataloader(test_dataset, processor, batch_size=config['val_batch_size'], shuffle=False)
+    model = DetrForObjectDetection.from_pretrained(config["model_ckpts"]).to(device)
 
-    def collate_fn(batch):
-        pixel_values = [ex["pixel_values"] for ex in batch]
-        labels = [ex["labels"] for ex in batch]
-        ret = processor.pad(pixel_values, annotations=labels, return_tensors="pt")
-        for elem in ret["labels"]:
-            elem["boxes"] = elem["boxes"].float()
-        return ret
 
-    test_dataloader = DataLoader(test_dataset, collate_fn=collate_fn, batch_size=config['val_batch_size'], shuffle=True)
-
-    model = DetrForObjectDetection.from_pretrained(config["save_model_dir"]).to(device)
-    
 
     batch = next(iter(test_dataloader))
     batch = next(iter(test_dataloader))
@@ -113,11 +105,19 @@ def main(config):
     print("Batch objects Bounding Boxes:  ",  batch_obj_bbox)
     print("Batch objects Scores:  ",  batch_obj_scores)
 
+    for im, labels, pred_obj, pred_bbox, pred_score in zip(batch["pixel_values"], 
+                                            batch['labels'], 
+                                            batch_objs,
+                                            batch_obj_bbox, 
+                                            batch_obj_scores):
+        print("Image shape:  ",  im.shape)
+
+
 
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate the DETR pretrained model")
+    parser = argparse.ArgumentParser(description="Fine tune the DETR model")
     parser.add_argument('dir', type=str, help="Target folder to save the configuration, models, and outputs")
     args = parser.parse_args()
 
