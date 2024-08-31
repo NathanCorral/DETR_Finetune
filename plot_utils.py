@@ -131,7 +131,7 @@ def draw_bbox_xywh(ax, bbox_xywh, label=None, score=None, id2label=None, edgecol
 
     return rect, text
 
-def draw_bbox_centerxywh_rel(ax, bbox_centerxywh_rel, label, score=None, id2label=None, edgecolor='g', linewidth=2):
+def draw_bbox_centerxywh_rel(ax, bbox_centerxywh_rel, label=None, score=None, id2label=None, edgecolor='g', linewidth=2):
     """
     Draw bounding box on the image given in relative center XYWH format.
 
@@ -160,19 +160,25 @@ def draw_bbox_centerxywh_rel(ax, bbox_centerxywh_rel, label, score=None, id2labe
 
     im_h, im_w = ax_ims[0].get_size()
 
-    center_x *= im_w
-    w *= im_w
-    center_y *= im_h
-    h *= im_h
+    # !!!!This will modify the values of the batch!!!!
+    # center_x *= im_w
+    # w *= im_w
+    # center_y *= im_h
+    # h *= im_h
+    # y = center_y - h//2
+    # x = center_x - w//2
+    # rect = patches.Rectangle((x, y), w, h, linewidth=linewidth, edgecolor=edgecolor, facecolor='none')
 
-    y = center_y - h//2
-    x = center_x - w//2
-
-    rect = patches.Rectangle((x, y), w, h, linewidth=linewidth, edgecolor=edgecolor, facecolor='none')
+    y = int((center_y - h/2.)*im_h)
+    x = int((center_x - w/2.)*im_w)
+    rect = patches.Rectangle((x, y), w*im_w, h*im_h, linewidth=linewidth, edgecolor=edgecolor, facecolor='none')
     
-    label_text = f'{id2label[int(label)] if id2label else label}'
-    if score:
-        label_text += f': {score:.2f}'
+    if label is not None:
+        label_text = f'{id2label[int(label)] if id2label else label}'
+        if score:
+            label_text += f': {score:.2f}'
+    else:
+        label_text = None
     
     text = ax.text(x, y - 10, label_text, fontsize=9, color='black', bbox=dict(facecolor='white', alpha=0.2))
     ax.add_patch(rect)
@@ -295,3 +301,5 @@ def show_samples_batch(batch, id2label, mean, std, num_cols=2, max_num_rows=3):
         axs_patches.append(patches)
 
         ax.axis('off')
+
+    return fig, axs
