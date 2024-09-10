@@ -53,7 +53,7 @@ def dataset_explorer(dataset, id2label, save_dir, n=3):
     # Note that splicing the samples e.g. samples["image"] wont apply the train transform because
     #   the transform examples only have the "image" column and none of the others i.e. ["image_id", "targets", ..]
     # This method may not work with an itterable dataset, which doesnt have a train transform
-    dataset_without_transform = dataset.with_transform(Identity()) # hack to remove transform
+    dataset_without_transform = dataset.with_transform(lambda x: x) # Remove transform
     samples = dataset_without_transform.shuffle().select(range(n)) # selecting random images
 
     for i, sample in enumerate(samples):
@@ -64,8 +64,32 @@ def dataset_explorer(dataset, id2label, save_dir, n=3):
         plt.savefig(os.path.join(save_dir, f'dataset_im_{sample["image_id"]}'), bbox_inches='tight')
 
 
+def save_im_augs(dataset, save_dir, n=3):
+    """
+    Display augmented images with their originals side-by-side.
+    """
+    idxs = np.random.randint(len(dataset), size=(n))
+    dataset_without_transform = dataset.with_transform(lambda x: x) 
+
+    fig, axes = plt.subplots(nrows=n, ncols=2)
+    for i, idx in enumerate(idxs):
+        orig_img = dataset_without_transform[int(idx)]['image']
+        trans_img = dataset[int(idx)]['pixel_values'].permute(1, 2, 0).numpy()
+
+        axes[i][0].imshow(orig_img)
+        axes[i][0].axis('off')
+        axes[i][1].imshow(trans_img)
+        axes[i][1].axis('off')
+        
+        if i == 0:
+            axes[i][0].set_title('Original Image(s)')
+            axes[i][1].set_title('Transformed Image(s)')
+        
+    plt.savefig(os.path.join(save_dir, f'im_augs.png'), bbox_inches='tight')
+
+
 def main(config, num_samples=8):
-    set_random_seed(5)
+    set_random_seed(7)
     save_dir = config["save_model_dir"]
 
     datasets = load_dataset(config['ds_name'], name=config["ds_name_arg"], cache_dir=config["dataset_cache_dir"])
@@ -92,6 +116,9 @@ def main(config, num_samples=8):
         # Plot class distribution
         # plot_class_distribution(dataset, split, id2label)
         # plt.savefig(os.path.join(plot_dir, "class_distribution.png"), bbox_inches='tight')
+
+        if split == "train":
+            save_im_augs(dataset, save_dir=plot_dir, n=3)
 
         # Plot objects in the dataset
         dataset_explorer(dataset, id2label, save_dir=plot_dir, n=num_samples)

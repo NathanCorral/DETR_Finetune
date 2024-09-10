@@ -6,6 +6,8 @@ import datasets as hf_datasets # datasets.arrow_dataset.Dataset, IterableDataset
 import torch
 from torch.utils.data import DataLoader
 
+import albumentations
+
 def prepare_dataset(dataset, processor, split):
     """
     Prepare and transform the datasets
@@ -27,68 +29,96 @@ def prepare_dataset(dataset, processor, split):
     id2label = {0:'head', 1:'helmet', 2:'person', 3:'others'}
     label2id = {v: k for k, v in id2label.items()}
 
-    def add_targets_col(example):
-        """
-        Prepare the annotations to be in COCO format.
-        """
-        annotations = {}
-        annotations["image_id"] = example["image_id"]
-        annotations_list = []
-        for label, bbox_xywh, area, _ in zip(
-            example['objects']['category'], 
-            example['objects']['bbox'], 
-            example['objects']['area'], 
-            example['objects']['id']):
-            new_ann = {
-                "image_id": example["image_id"],
-                "category_id": label2id[label],
-                "isCrowd": 0,
-                "area": area,
-                "bbox": list(bbox_xywh),
-            }
-            annotations_list.append(new_ann)
-        annotations["annotations"] = annotations_list
-        example["targets"] = annotations
-        return example
+    transform = albumentations.Compose(
+        [
+            # albumentations.Resize(480, 480),
+            albumentations.HorizontalFlip(p=0.5),
+            albumentations.RandomBrightnessContrast(p=0.5),
+        ],
+        bbox_params=albumentations.BboxParams(format="coco", label_fields=["category"]),
+    )
 
-    def train_transform(examples):
+    def formatted_anns(image_id, category, area, bbox):
+        # The image_processor (https://github.com/huggingface/transformers/blob/9485289f374d4df7e8aa0ca917dc131dcf64ebaf/src/transformers/models/detr/image_processing_detr.py)
+        #   expects annotations to be in the format:
+        #       'image_id': int, 'annotations': List[Dict]
+        #   where each dictionary is a COCO object annoation
+        annotations = []
+        for i in range(0, len(category)):
+            new_ann = {
+                "image_id": image_id,
+                "category_id": category[i],
+                "isCrowd": 0,
+                "area": area[i],
+                "bbox": list(bbox[i]),
+            }
+            annotations.append(new_ann)
+        return annotations
+
+    def train_transform_aug(examples):
         """
         Transform for an entire batch.
         """
-        if not "image" in examples or not "targets" in examples:
-            return examples # spliced batch
-        images = [np.array(im) for im in examples["image"]]
-        return processor(images=images, annotations=examples["targets"], return_tensors="pt")
+        image_ids = examples["image_id"]
+        images, bboxes, area, categories = [], [], [], []
+        for image, objects in zip(examples["image"], examples["objects"]):
+            image = np.array(image.convert("RGB"))
+            out = transform(image=image, bboxes=objects["bbox"], category=objects["id"])
+
+            area.append(objects["area"])
+            images.append(out["image"])
+            bboxes.append(out["bboxes"])
+            categories.append(out["category"])
+
+        targets = [
+            {"image_id": id_, "annotations": formatted_anns(id_, cat_, ar_, box_)}
+            for id_, cat_, ar_, box_ in zip(image_ids, categories, area, bboxes)
+        ]
+
+        return processor(images=images, annotations=targets, return_tensors="pt")
 
     def val_transform(examples):
         """
         Transform for an entire batch.
         """
-        if not "image" in examples or not "targets" in examples:
-            return examples # spliced batch
-        images = [np.array(im) for im in examples["image"]]
-        return processor(images=images, annotations=examples["targets"], return_tensors="pt")
+        image_ids = examples["image_id"]
+        images, bboxes, area, categories = [], [], [], []
+        for image, objects in zip(examples["image"], examples["objects"]):
+            image = np.array(image.convert("RGB"))
+            area.append(objects["area"])
+            images.append(image)
+            bboxes.append(objects["bbox"])
+            categories.append(objects["id"])
+
+        targets = [
+            {"image_id": id_, "annotations": formatted_anns(id_, cat_, ar_, box_)}
+            for id_, cat_, ar_, box_ in zip(image_ids, categories, area, bboxes)
+        ]
+        return processor(images=images, annotations=targets, return_tensors="pt")
 
     if split == "train":
-        transform = train_transform
+        use_transform = train_transform_aug
     else:
-        transform = val_transform
+        use_transform = val_transform
 
     # https://github.com/huggingface/datasets/issues/4983#issuecomment-1490444711
     if isinstance(dataset, hf_datasets.arrow_dataset.Dataset):
-        dataset = dataset.map(add_targets_col).with_transform(transform)
+        dataset = dataset.with_transform(use_transform)
     elif isinstance(dataset, hf_datasets.iterable_dataset.IterableDataset):
-        dataset = dataset.map(add_targets_col).map(transform)
+        dataset = dataset.map(use_transform)
     else:
         print(f"Unknown dataset type {type(dataset)}, trying default...")
-        dataset = dataset.map(add_targets_col).with_transform(transform)
+        dataset = dataset.with_transform(use_transform)
 
     return dataset, id2label
 
 def prepare_dataloader(dataset, processor, **kwargs):
+    # print("Type processor:  ",  type(processor))
     def collate_fn(batch):
         pixel_values = [ex["pixel_values"] for ex in batch]
         labels = [ex["labels"] for ex in batch]
+        # print("Labels:  ",  labels)
+        # print("Type processor:  ",  type(processor))
         ret = processor.pad(pixel_values, annotations=labels, return_tensors="pt")
         for elem in ret["labels"]:
             elem["boxes"] = elem["boxes"].float()
