@@ -6,6 +6,7 @@ from datasets import load_dataset
 from transformers import DetrImageProcessor, DetrForObjectDetection, get_cosine_schedule_with_warmup
 
 import torch
+from torch.utils.tensorboard import SummaryWriter
 
 from detr_utils import prepare_dataset, prepare_dataloader, train_one_epoch, validate_one_epoch
 from utils import load_config, set_random_seed, param_count, make_folder, save_losses
@@ -65,6 +66,7 @@ def save_train_ckpt(ckpt_dir, epoch, steps,
     filename = f'train_ckpt_{epoch:03d}.pth'
     save_path = os.path.join(ckpt_dir, filename)
     torch.save(checkpoint, save_path)
+    print(f'Model Saved under:  {save_path}')
 
 def get_most_recent_checkpoint(ckpt_dir):
     checkpoint_files = [f for f in os.listdir(ckpt_dir) if f.endswith('.pth') and "train" in f]
@@ -103,10 +105,8 @@ def restore(ckpt_dir, model, optimizer, scheduler, device):
     # val_loss_items = checkpoint['val_loss_items']
     return checkpoint
 
-
-
-def main(config, continue_training=False):
-    set_random_seed(5)
+def main(config, continue_training=False, seed=5):
+    set_random_seed(seed)
     save_dir = config["save_model_dir"]
     device = config["device"]
 
@@ -136,6 +136,7 @@ def main(config, continue_training=False):
 
     ckpt_dir = os.path.join(save_dir, f'ckpts/')
     make_folder(ckpt_dir)
+    writer = SummaryWriter(config["tensorboard"])
 
     # Reload if we are continueing training
     if continue_training:
@@ -154,7 +155,7 @@ def main(config, continue_training=False):
     for epoch in range(start_epoch+1, config['epochs']+1):
         print(f'Epoch: {epoch}')
         print_learning_rate(optimizer)
-        train_loss, train_loss_dict = train_one_epoch(model, train_dataloader, optimizer, scheduler, config['device'])
+        train_loss, train_loss_dict = train_one_epoch(model, train_dataloader, optimizer, scheduler, config['device'], writer, epoch)
         # Print Epoch Loss
         print(f'Training Loss: {train_loss:.3f}')
         for k,v in train_loss_dict.items(): 

@@ -160,7 +160,7 @@ def test_loop(config, model, dataloader, thresholds, display_prob=0.05):
         if True or random.random() >= display_prob:
             display_multi_threshold(config, batch, outputs, thresholds)
 
-        if i > 4:
+        if i > 8:
             break
 
 def main(config):
@@ -169,7 +169,7 @@ def main(config):
     # threshold = config["threshold"]
     # threshold = 0.017
     thresholds = [0.7, 0.5, 0.3, 0.1]
-    thresholds = [0.2, 0.5, 0.3]
+    thresholds = [0.7, 0.5, 0.3]
     # thresholds = [0.3]
     save_dir = config["save_model_dir"]
 

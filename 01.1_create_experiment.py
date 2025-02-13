@@ -30,6 +30,7 @@ def get_default_config(save_dir):
         'val_losses': os.path.join(save_dir, f'val_losses/'),
         'test_losses': os.path.join(save_dir, f'test_losses/'),
         'plot_dir': os.path.join(save_dir, f'plots/'),
+        'tensorboard': os.path.join(save_dir, f'tensorboard/'),
     }
     return config
 

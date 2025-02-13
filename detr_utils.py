@@ -5,6 +5,7 @@ import datasets as hf_datasets # datasets.arrow_dataset.Dataset, IterableDataset
 
 import torch
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 import albumentations
 
@@ -128,7 +129,7 @@ def prepare_dataloader(dataset, processor, **kwargs):
 
     return dataloader
 
-def train_one_epoch(model, dataloader, optimizer, scheduler, device):
+def train_one_epoch(model, dataloader, optimizer, scheduler, device, writer, epoch):
     """
     Train the model for one epoch.
 
@@ -149,6 +150,8 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device):
     loss_sum = 0.
     loss_dict_sum = {}
     for i, batch in enumerate(pbar := tqdm(dataloader)):
+        if i > 25:
+            break
         pixel_values = batch["pixel_values"].to(device)
         pixel_mask = batch["pixel_mask"].to(device)
         labels = [{k: v.to(device) for k, v in t.items()} for t in batch["labels"]]
@@ -163,14 +166,51 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device):
 
         if i % 50 == 0:
             pbar.set_description(f'training_loss: {loss_sum/(i+1):.3f}')
+            # Log the training loss every 50 iterations
+            writer.add_scalar('Training/Loss', loss.item(), epoch * len(dataloader) + i)
 
         loss.backward()
         optimizer.step()
         scheduler.step()
         optimizer.zero_grad()
 
+        # Log learning rate
+        writer.add_scalar('Training/LearningRate', scheduler.get_last_lr()[0], epoch * len(dataloader) + i)
+
     loss_dict = {k: v/len(dataloader) for k, v in loss_dict_sum.items()}
+    
+    model.train()
+    loss_sum = 0.
+    loss_dict_sum = {}
+    # Log average loss and individual loss components for the epoch
+    writer.add_scalar('Training/AverageLoss', loss_sum / len(dataloader), epoch)
+    for k, v in loss_dict.items():
+        writer.add_scalar(f'Training/{k}', v, epoch)
+
     return loss_sum / len(dataloader), loss_dict
+    # for i, batch in enumerate(pbar := tqdm(dataloader)):
+    #     pixel_values = batch["pixel_values"].to(device)
+    #     pixel_mask = batch["pixel_mask"].to(device)
+    #     labels = [{k: v.to(device) for k, v in t.items()} for t in batch["labels"]]
+
+    #     outputs = model(pixel_values=pixel_values, pixel_mask=pixel_mask, labels=labels)
+    #     loss = outputs.loss
+    #     loss_dict = outputs.loss_dict
+
+    #     loss_sum += loss.item()
+    #     for k, v in loss_dict.items():
+    #         loss_dict_sum[k] = v.item() if k not in loss_dict_sum.keys() else loss_dict_sum[k] + v.item()
+
+    #     if i % 50 == 0:
+    #         pbar.set_description(f'training_loss: {loss_sum/(i+1):.3f}')
+
+    #     loss.backward()
+    #     optimizer.step()
+    #     scheduler.step()
+    #     optimizer.zero_grad()
+
+    # loss_dict = {k: v/len(dataloader) for k, v in loss_dict_sum.items()}
+    # return loss_sum / len(dataloader), loss_dict
 
 def validate_one_epoch(model, dataloader, device):
     """
