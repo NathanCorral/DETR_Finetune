@@ -3,6 +3,18 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 
+
+def convert_bbox_to_mask(bbox, image_size):
+    """Convert center XYWH relative bounding box to binary mask.  _centerxywh_rel"""
+    x, y, w, h = bbox
+    mask = np.zeros(image_size, dtype=np.int32)
+    x1 = int((x - w/2)*image_size[1])
+    y1 = int((y - h/2)*image_size[0])
+    x2 = int((x + w/2)*image_size[1])
+    y2 = int((y + h/2)*image_size[0])
+    mask[y1:y2, x1:x2] = 1
+    return mask
+
 def clip_objs(image: np.array, bboxes: list, margin=0.1) -> list:
     """
     Clip image regions based on bounding boxes with an additional x% margin.
@@ -172,14 +184,14 @@ def draw_bbox_centerxywh_rel(ax, bbox_centerxywh_rel, label=None, score=None, id
     y = int((center_y - h/2.)*im_h)
     x = int((center_x - w/2.)*im_w)
     rect = patches.Rectangle((x, y), w*im_w, h*im_h, linewidth=linewidth, edgecolor=edgecolor, facecolor='none')
-    
+
     if label is not None:
         label_text = f'{id2label[int(label)] if id2label else label}'
         if score:
             label_text += f': {score:.2f}'
     else:
         label_text = None
-    
+
     text = ax.text(x, y - 10, label_text, fontsize=9, color='black', bbox=dict(facecolor='white', alpha=0.2))
     ax.add_patch(rect)
 
@@ -240,6 +252,35 @@ def denormalize_image(im, mean, std):
     """
     im = std * im + mean
     im = np.clip(im, 0, 1)
+    return im
+
+def normalize_image(im : np.array, mean : list, std : list) -> np.array:
+    """
+    Normalize an image using the provided mean and standard deviation.
+    If it is of type unit8, convert it to floating point
+    If it is between 0-255, divide it by 255
+
+    :param im: The image to denormalize
+    :type im: np.array
+    :param mean: The mean used during normalization
+    :type mean: list
+    :param std: The standard deviation used during normalization
+    :type std: list
+    :returns: The denormalized image
+    :rtype: np.array
+    """
+    if im.dtype == np.uint8:
+        im = im.astype(np.float32)
+
+    # Scale pixel values to the range [0, 1] if they are in [0, 255]
+    if im.max() > 1.0:
+        im = im / 255.0
+
+    # Normalize the image using the provided mean and std
+    mean = np.array(mean, dtype=np.float32)
+    std = np.array(std, dtype=np.float32)
+    im = (im - mean) / std
+
     return im
 
 def show_samples_batch(batch, id2label, mean, std, num_cols=2, max_num_rows=3):

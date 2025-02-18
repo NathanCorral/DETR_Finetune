@@ -6,8 +6,47 @@ import datasets as hf_datasets # datasets.arrow_dataset.Dataset, IterableDataset
 import torch
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torch.nn import functional as F
 
 import albumentations
+
+
+
+def postprocess(model_out, threshold):
+    # Almost replication of:
+    # results = processor.post_process_object_detection(model_out, target_sizes=orig_target_sizes, threshold=threshold)
+    batch_size = len(model_out.logits)
+
+    probs = F.softmax(model_out.logits, dim=-1)
+    # After softmask, drop the last (no object) label
+    probs = probs[:,:,:-1]
+    mask = probs > threshold
+    # Get the indices where the probabilities exceed the threshold
+    # The 'indices' variable will be a tuple of three tensors (batch_idx, pred_idx, obj_idx)
+    # batch_idx: The batch index
+    # pred_idx: The prediction index
+    # obj_idx: The object index where the probability exceeds the threshold
+    indices = torch.where(mask)
+    indices = [element.detach().to("cpu").numpy().astype(int) for element in indices]
+    # selected_probs = probs[mask]
+    # selected_indices = indices[2]  # obj_idx where prob > threshold
+    # print("Probabilities greater than threshold:", selected_probs)
+    # print("Object indices:", selected_indices)
+
+    # turn into a list of dictionaries (one item for each example in the batch)
+    # orig_target_sizes = torch.stack([target["orig_size"] for target in labels], dim=0)
+
+    results_all = [{"scores": [], "labels": [], "bboxes_centerxywh_rel": []} for _ in range(batch_size)]
+    for batch_idx, prediction_id, obj_id in zip(indices[0], indices[1], indices[2]):
+        score = probs[batch_idx, prediction_id, obj_id].item()
+        bbox = model_out.pred_boxes[batch_idx, prediction_id].detach().to("cpu").numpy()
+        label = obj_id
+
+        results_all[batch_idx]["scores"].append(score)
+        results_all[batch_idx]["labels"].append(label)
+        results_all[batch_idx]["bboxes_centerxywh_rel"].append(bbox)
+
+    return results_all
 
 def prepare_dataset(dataset, processor, split):
     """
@@ -150,8 +189,6 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, writer, epo
     loss_sum = 0.
     loss_dict_sum = {}
     for i, batch in enumerate(pbar := tqdm(dataloader)):
-        if i > 25:
-            break
         pixel_values = batch["pixel_values"].to(device)
         pixel_mask = batch["pixel_mask"].to(device)
         labels = [{k: v.to(device) for k, v in t.items()} for t in batch["labels"]]
@@ -180,8 +217,6 @@ def train_one_epoch(model, dataloader, optimizer, scheduler, device, writer, epo
     loss_dict = {k: v/len(dataloader) for k, v in loss_dict_sum.items()}
     
     model.train()
-    loss_sum = 0.
-    loss_dict_sum = {}
     # Log average loss and individual loss components for the epoch
     writer.add_scalar('Training/AverageLoss', loss_sum / len(dataloader), epoch)
     for k, v in loss_dict.items():

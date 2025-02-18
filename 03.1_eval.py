@@ -5,6 +5,7 @@ import random
 import argparse
 from tqdm import tqdm
 
+
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
@@ -13,50 +14,74 @@ from transformers import DetrImageProcessor, DetrForObjectDetection
 
 import torch
 from torch.utils.data import DataLoader
-from torch.nn import functional as F
 
-from detr_utils import prepare_dataset, prepare_dataloader
-from plot_utils import denormalize_image, show_samples_batch, draw_bbox_centerxywh_rel
+from detr_utils import prepare_dataset, prepare_dataloader, postprocess
+from plot_utils import denormalize_image, show_samples_batch, draw_bbox_centerxywh_rel, convert_bbox_to_mask
 from utils import load_config, set_random_seed, param_count, make_folder
 
+import numpy as np
+import torch
+from evaluate import load
 
-def postprocess(model_out, threshold):
-    # Almost replication of:
-    # results = processor.post_process_object_detection(model_out, target_sizes=orig_target_sizes, threshold=threshold)
-    batch_size = len(model_out.logits)
 
-    probs = F.softmax(model_out.logits, dim=-1)
-    # After softmask, drop the last (no object) label
-    probs = probs[:,:,:-1]
-    mask = probs > threshold
-    # Get the indices where the probabilities exceed the threshold
-    # The 'indices' variable will be a tuple of three tensors (batch_idx, pred_idx, obj_idx)
-    # batch_idx: The batch index
-    # pred_idx: The prediction index
-    # obj_idx: The object index where the probability exceeds the threshold
-    indices = torch.where(mask)
-    indices = [element.detach().to("cpu").numpy().astype(int) for element in indices]
-    # selected_probs = probs[mask]
-    # selected_indices = indices[2]  # obj_idx where prob > threshold
-    # print("Probabilities greater than threshold:", selected_probs)
-    # print("Object indices:", selected_indices)
+# def create_pred_mask(results_all, id2labels, colors, ):
+#     """
+#     Convert the predicted bounding boxes into a mask
+#     """
 
-    # turn into a list of dictionaries (one item for each example in the batch)
-    # orig_target_sizes = torch.stack([target["orig_size"] for target in labels], dim=0)
 
-    results_all = [{"scores": [], "labels": [], "bboxes_centerxywh_rel": []} for _ in range(batch_size)]
-    for batch_idx, prediction_id, obj_id in zip(indices[0], indices[1], indices[2]):
-        score = probs[batch_idx, prediction_id, obj_id].item()
-        bbox = model_out.pred_boxes[batch_idx, prediction_id].detach().to("cpu").numpy()
-        label = obj_id
+def plot_class_distribution(dataset, dataset_name, id2label):
+    """
+    Print and plot the class distribution of a dataset.
 
-        results_all[batch_idx]["scores"].append(score)
-        results_all[batch_idx]["labels"].append(label)
-        results_all[batch_idx]["bboxes_centerxywh_rel"].append(bbox)
+    Args:
+        dataset (torch.utils.data.Dataset): The dataset to analyze.
+        dataset_name (str): The name of the dataset.
 
-    return results_all
+    Returns:
+        None
+    """
+    labels = np.zeros(len(id2label), dtype=int)
+    for example in dataset:
+        for label in example['labels']['class_labels']:
+            labels[label] += 1
 
-def display_multi_threshold(config, batch, outputs, thresholds):
+    # Plot the class distribution
+    # Large figuresize to fit label axes.  Width x Height in inches
+    # fig, ax = plt.subplots(figsize=(10.,12.))
+    fig, ax = plt.subplots()
+    ax.bar(id2label.values(), labels)
+    ax.set_xlabel("Class")
+    ax.set_ylabel("Number of Examples")
+    ax.set_title(f"Class Distribution for {dataset_name} Data")
+    ax.xaxis.set_ticks(np.arange(len(id2label), dtype=int))
+    ax.set_xticklabels(id2label.values(), rotation=90)
+    return fig, ax
+
+
+def evaluate_bounding_boxes(predictions, ground_truth, image_size, num_classes):
+    """Evaluate bounding boxes using mean_iou metric."""
+    mean_iou = load("mean_iou")
+    pred_masks, gt_masks = [], []
+
+    for pred, gt in zip(predictions, ground_truth):
+        pred_mask = np.zeros(image_size, dtype=np.int32)
+        gt_mask = np.zeros(image_size, dtype=np.int32)
+
+        for bbox, label in zip(pred['bboxes'], pred['labels']):
+            pred_mask = np.maximum(pred_mask, convert_bbox_to_mask(bbox, image_size) * (label + 1))
+
+        for bbox, label in zip(gt['bboxes'], gt['labels']):
+            gt_mask = np.maximum(gt_mask, convert_bbox_to_mask(bbox, image_size) * (label + 1))
+
+        pred_masks.append(pred_mask)
+        gt_masks.append(gt_mask)
+
+    results = mean_iou.compute(predictions=pred_masks, references=gt_masks, num_labels=num_classes + 1, ignore_index=0)
+    return results
+
+
+def display_multi_threshold_old(config, batch, outputs, thresholds):
     """
     Create a multi-axis plot for each image in the batch displaying results using multiple thresholds
     """
@@ -88,7 +113,6 @@ def display_multi_threshold(config, batch, outputs, thresholds):
         batched_results[threshold] = postprocess(outputs, threshold)
 
     # Create a figure for each image batch
-
     for i in range(batch_size):
         save_png = os.path.join(config["plot_dir"], "test_thresh_examples", f'image_{batch["labels"][i]["image_id"].item()}.png')
         make_folder(save_png)
@@ -143,10 +167,101 @@ def display_multi_threshold(config, batch, outputs, thresholds):
         plt.savefig(save_png, bbox_inches='tight')
         # plt.savefig(save_png, dpi=300)
 
+def display_multi_threshold(config, batch, outputs, thresholds):
+    """
+    Create a multi-axis plot for each image in the batch displaying results using multiple thresholds
+    """
+    mean, std = config["mean"], config["std"]
+    id2label = config["id2label"]
+    batch_size = len(batch)-1
+
+    labels_to_color_gt = {
+        "helmet": 'g',
+        "head": 'b',
+        "person": 'cyan',
+        "other": 'purple',
+    }
+    labels_to_color_pred = {
+        "helmet": 'orange',
+        "head": 'r',
+        "person": 'orange',
+        "other": 'magenta',
+    }
+
+    # Create custom legend handles for ground truth and predictions
+    gt_handles = [Line2D([0], [0], color=color, lw=4, label=label) for label, color in labels_to_color_gt.items()]
+    pred_handles = [Line2D([0], [0], color=color, lw=4, label=label) for label, color in labels_to_color_pred.items()]
+
+    # Postprocess the model outputs using specific batch
+    batched_results = {}
+    for threshold in thresholds:
+        batched_results[threshold] = postprocess(outputs, threshold)
+
+    for i in range(batch_size):
+        save_png = os.path.join(config["plot_dir"], "test_thresh_examples", f'image_{batch["labels"][i]["image_id"].item()}.png')
+        make_folder(save_png)
+
+        num_plots = len(thresholds)+1
+        if num_plots == 1:
+            fig, axes = plt.subplots()
+            axes = [axes]
+        elif num_plots > 3:
+            fig, axes = plt.subplots(int(math.ceil(num_plots/2.)), 2)
+            axes = axes.flatten()
+        else:
+            fig, axes = plt.subplots((num_plots))
+
+        # GT data and image from each batch
+        im = batch["pixel_values"][i]
+        im = denormalize_image(im.permute(1, 2, 0).numpy(), mean, std)
+        labels = batch["labels"][i]["class_labels"].numpy()
+        bboxes_centerxywh_rel = batch["labels"][i]["boxes"]
+
+        for ax_i, thresh in enumerate(thresholds):
+            ax = axes[ax_i]
+            ax.imshow(im)
+
+            # Show the ground truth
+            for label, bbox_centerxywh_rel in zip(labels, bboxes_centerxywh_rel):
+                label_str = id2label[label]
+                c = labels_to_color_gt[label_str] if label_str in labels_to_color_gt else 'g'
+                _, _ = draw_bbox_centerxywh_rel(ax, bbox_centerxywh_rel, edgecolor=c, linewidth=2)
+
+            # Show predictions as masks
+            results = batched_results[thresh][i]
+            combined_mask = np.zeros(im.shape[:3], dtype=np.float32)
+            for label, bbox_centerxywh_rel in zip(results["labels"], results["bboxes_centerxywh_rel"]):
+                label_str = id2label[label]
+                c = labels_to_color_pred[label_str] if label_str in labels_to_color_pred else 'r'
+                mask = convert_bbox_to_mask(bbox_centerxywh_rel, im.shape[:3])
+                combined_mask += mask * plt.cm.colors.to_rgba(c)[:3]
+
+            # Normalize the combined mask
+            combined_mask = np.clip(combined_mask, 0, 1)
+            
+            # Overlay the mask on the image
+            ax.imshow(combined_mask, alpha=0.5)
+
+            ax.set_title(f"Threshold: {thresh}")
+
+        # Add the legends to the last (blank) plot
+        ax = axes[-1]
+        gt_legend = ax.legend(handles=gt_handles, title="Ground Truth", loc='upper left')
+        ax.add_artist(gt_legend)
+        pred_legend = ax.legend(handles=pred_handles, title="Predictions", loc='upper right')
+        ax.axis("off")
+
+        plt.savefig(save_png, bbox_inches='tight')
+        plt.close("all")
+
+
 
 def test_loop(config, model, dataloader, thresholds, display_prob=0.05):
     device = config["device"]
+    id2label = config["id2label"]
+    threshold = config["threshold"]
     model.eval()
+    distribution_labels = np.zeros(len(id2label), dtype=int)
 
     for i, batch in enumerate(pbar := tqdm(dataloader)):
         pixel_values = batch["pixel_values"].to(device)
@@ -156,20 +271,39 @@ def test_loop(config, model, dataloader, thresholds, display_prob=0.05):
 
         with torch.no_grad():
             outputs = model(pixel_values=pixel_values, pixel_mask=pixel_mask)
+            results = postprocess(outputs, threshold)
+            for result in results:
+                for label in result["labels"]:
+                    distribution_labels[label] += 1
 
-        if True or random.random() >= display_prob:
+        if random.random() <= display_prob:
             display_multi_threshold(config, batch, outputs, thresholds)
 
-        if i > 8:
-            break
+        # if i > 8:
+        #     break
+
+
+
+    save_png = os.path.join(config["plot_dir"], f"distribution_thresh_{threshold}.png")
+    print(f"Creating figure:  {save_png}")
+    print(distribution_labels)
+    # Plot the label distribution
+    fig, ax = plt.subplots()
+    ax.bar(id2label.values(), distribution_labels)
+    ax.set_xlabel("Class")
+    ax.set_ylabel("Number of Examples")
+    ax.set_title(f"Class Distribution of Model Predictions \nTest set.  Thresh: {threshold}")
+    ax.xaxis.set_ticks(np.arange(len(id2label), dtype=int))
+    ax.set_xticklabels(id2label.values(), rotation=90)
+    plt.savefig(save_png, bbox_inches='tight')
 
 def main(config):
     set_random_seed(5)
     device = config["device"]
     # threshold = config["threshold"]
     # threshold = 0.017
-    thresholds = [0.7, 0.5, 0.3, 0.1]
     thresholds = [0.7, 0.5, 0.3]
+    # thresholds = [0.2, 0.5, 0.3]
     # thresholds = [0.3]
     save_dir = config["save_model_dir"]
 

@@ -10,7 +10,6 @@ from transformers import DetrImageProcessor
 from torch.nn import Identity
 from torch.utils.data import DataLoader
 
-# Plotting imports
 import matplotlib.pyplot as plt
 
 from detr_utils import prepare_dataset, prepare_dataloader
